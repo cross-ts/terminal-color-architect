@@ -1,19 +1,68 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Copy, RefreshCw, Terminal, Sliders, Moon, Sun, Check, Code, Hash, Palette, ArrowRight, Zap, Cloud, Shield, EyeOff, Ghost, Slack } from 'lucide-react';
+import { StrictMode, useMemo, useState, type CSSProperties } from 'react';
+import { createRoot } from 'react-dom/client';
+import type { LucideIcon } from 'lucide-react';
+import { RefreshCw, Terminal, Sliders, Moon, Check, Hash, Palette, ArrowRight, Zap, Cloud, Shield, EyeOff, Ghost, Slack, Code } from 'lucide-react';
+import './index.css';
+
+type BrightStrategy = 'vibrant' | 'pastel' | 'traditional';
+type DimStrategy = 'subtle' | 'muted' | 'deep';
+
+type PaletteConfig = {
+  bgLightness: number;
+  fgLightness: number;
+  chromaScale: number;
+  lightnessScale: number;
+  hueShift: number;
+  brightStrategy: BrightStrategy;
+  dimStrategy: DimStrategy;
+};
+
+type PaletteColor = {
+  name: string;
+  l: number;
+  c: number;
+  h: number;
+  css: string;
+  hex: string;
+};
+
+type Palette = {
+  normal: Record<string, PaletteColor>;
+  bright: Record<string, PaletteColor>;
+  dim: Record<string, PaletteColor>;
+  background: PaletteColor;
+  foreground: PaletteColor;
+  badgeBlack: PaletteColor;
+};
+
+type Strategy<T extends string> = {
+  id: T;
+  label: string;
+  icon: LucideIcon;
+  desc: string;
+};
+
+type OklchValues = {
+  l: number;
+  c: number;
+  h: number;
+};
+
+type PaletteSwatchProps = {
+  color: PaletteColor;
+  onCopy: (text: string, key: string) => void;
+  copied: string | null;
+};
 
 // --- Color Utility Functions ---
 
 // Helper to constrain values
-const clamp = (val, min, max) => Math.min(Math.max(val, min), max);
+const clamp = (val: number, min: number, max: number): number => Math.min(Math.max(val, min), max);
 
 // OKLCH to Hex converter (Approximation for standard sRGB)
-const oklchToHex = (l, c, h) => {
-  l = parseFloat(l);
-  c = parseFloat(c);
-  h = parseFloat(h);
-
-  const a_ = c * Math.cos(h * Math.PI / 180);
-  const b_ = c * Math.sin(h * Math.PI / 180);
+const oklchToHex = (l: number, c: number, h: number): string => {
+  const a_ = c * Math.cos((h * Math.PI) / 180);
+  const b_ = c * Math.sin((h * Math.PI) / 180);
 
   // OKLCH to Linear sRGB (via OKLab)
   const l_ = l + 0.3963377774 * a_ + 0.2158037573 * b_;
@@ -24,14 +73,14 @@ const oklchToHex = (l, c, h) => {
   const m_3 = m_ * m_ * m_;
   const s_3 = s_ * s_ * s_;
 
-  let r = +4.0767416621 * l_3 - 3.3077115913 * m_3 + 0.2309699292 * s_3;
-  let g = -1.2684380046 * l_3 + 2.6097574011 * m_3 - 0.3413193965 * s_3;
-  let b = -0.0041960863 * l_3 - 0.7034186147 * m_3 + 1.7076147010 * s_3;
+  const r = +4.0767416621 * l_3 - 3.3077115913 * m_3 + 0.2309699292 * s_3;
+  const g = -1.2684380046 * l_3 + 2.6097574011 * m_3 - 0.3413193965 * s_3;
+  const b = -0.0041960863 * l_3 - 0.7034186147 * m_3 + 1.7076147010 * s_3;
 
   // Gamma correction
-  const processChannel = (v) => {
-    v = v > 0.0031308 ? 1.055 * Math.pow(v, 1.0 / 2.4) - 0.055 : 12.92 * v;
-    return Math.round(clamp(v, 0, 1) * 255);
+  const processChannel = (value: number): number => {
+    const adjusted = value > 0.0031308 ? 1.055 * Math.pow(value, 1.0 / 2.4) - 0.055 : 12.92 * value;
+    return Math.round(clamp(adjusted, 0, 1) * 255);
   };
 
   const rHex = processChannel(r).toString(16).padStart(2, '0');
@@ -42,7 +91,7 @@ const oklchToHex = (l, c, h) => {
 };
 
 // Hex to OKLCH converter
-const hexToOklch = (hex) => {
+const hexToOklch = (hex: string): OklchValues => {
   // Remove # if present
   hex = hex.replace(/^#/, '');
 
@@ -52,7 +101,7 @@ const hexToOklch = (hex) => {
   let b = parseInt(hex.substring(4, 6), 16) / 255;
 
   // sRGB to Linear RGB
-  const toLinear = (c) => c > 0.04045 ? Math.pow((c + 0.055) / 1.055, 2.4) : c / 12.92;
+  const toLinear = (c: number) => c > 0.04045 ? Math.pow((c + 0.055) / 1.055, 2.4) : c / 12.92;
   r = toLinear(r);
   g = toLinear(g);
   b = toLinear(b);
@@ -88,9 +137,11 @@ const BASE_HUES = {
   cyan: 195,
   blue: 264,
   magenta: 320,
-};
+} as const;
 
-const DEFAULT_CONFIG = {
+type BaseHueKey = keyof typeof BASE_HUES;
+
+const DEFAULT_CONFIG: PaletteConfig = {
   bgLightness: 0.18, // Very dark gray
   fgLightness: 0.90, // Off-white (Boosted for better contrast against colors)
   chromaScale: 0.12, // Standard vibrancy
@@ -100,13 +151,13 @@ const DEFAULT_CONFIG = {
   dimStrategy: 'subtle', // 'subtle' | 'muted' | 'deep'
 };
 
-const BRIGHT_STRATEGIES = [
+const BRIGHT_STRATEGIES: Strategy<BrightStrategy>[] = [
   { id: 'vibrant', label: 'Vibrant', icon: Zap, desc: 'Rich & Deep Pop (No Washout)' },
   { id: 'pastel', label: 'Pastel', icon: Cloud, desc: 'High Lightness, Low Chroma' },
   { id: 'traditional', label: 'Classic', icon: Shield, desc: 'Simple Lightness Boost' },
 ];
 
-const DIM_STRATEGIES = [
+const DIM_STRATEGIES: Strategy<DimStrategy>[] = [
   { id: 'subtle', label: 'Subtle', icon: EyeOff, desc: 'Slightly Darker & Desaturated' },
   { id: 'muted', label: 'Muted', icon: Cloud, desc: 'Low Chroma (Grayish)' },
   { id: 'deep', label: 'Deep', icon: Moon, desc: 'Significantly Darker' },
@@ -115,32 +166,35 @@ const DIM_STRATEGIES = [
 // --- Components ---
 
 export default function TerminalPaletteGenerator() {
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [copied, setCopied] = useState(null);
-  const [hexInput, setHexInput] = useState('');
-  const [hexError, setHexError] = useState('');
-  // Track which base hue corresponds to the current hex input/calculation
-  // Default to Blue to match the initial placeholder example
-  const [activeBaseHue, setActiveBaseHue] = useState(BASE_HUES.blue);
-
-  // Sync Hex Input when sliders change
-  useEffect(() => {
-    const { lightnessScale, chromaScale, hueShift } = config;
-    // Reconstruct the color based on the active base hue and current sliders
-    let h = (activeBaseHue + hueShift) % 360;
+  const computeHexInput = (state: PaletteConfig, baseHue: number) => {
+    let h = (baseHue + state.hueShift) % 360;
     if (h < 0) h += 360;
 
-    // Use the main lightness/chroma scales directly to show the representative color
-    const hex = oklchToHex(lightnessScale, chromaScale, h);
-    setHexInput(hex);
-  }, [config, activeBaseHue]);
+    return oklchToHex(state.lightnessScale, state.chromaScale, h);
+  };
+
+  const [activeBaseHue, setActiveBaseHue] = useState<number>(BASE_HUES.blue);
+  const [config, setConfig] = useState<PaletteConfig>(DEFAULT_CONFIG);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [hexInput, setHexInput] = useState<string>(() => computeHexInput(DEFAULT_CONFIG, BASE_HUES.blue));
+  const [hexError, setHexError] = useState<string>('');
+  // Track which base hue corresponds to the current hex input/calculation
+  // Default to Blue to match the initial placeholder example
+
+  const updateConfig = (next: PaletteConfig | ((prev: PaletteConfig) => PaletteConfig), baseHue = activeBaseHue) => {
+    setConfig((prev) => {
+      const resolved = typeof next === 'function' ? next(prev) : next;
+      setHexInput(computeHexInput(resolved, baseHue));
+      return resolved;
+    });
+  };
 
   // Generate the palette based on config
-  const palette = useMemo(() => {
+  const palette = useMemo<Palette>(() => {
     const { bgLightness, fgLightness, chromaScale, lightnessScale, hueShift, brightStrategy, dimStrategy } = config;
 
     // Helper to build color object
-    const makeColor = (name, baseHue, l, c, isGrayscale = false) => {
+    const makeColor = (name: string, baseHue: number, l: number, c: number, isGrayscale = false): PaletteColor => {
       const h = (baseHue + hueShift) % 360;
       const finalC = isGrayscale ? 0.01 : c;
       // Safety clamp for L to prevent going out of range
@@ -247,22 +301,22 @@ export default function TerminalPaletteGenerator() {
   }, [config]);
 
   // Calculate Accent Color for UI
-  const accentColor = useMemo(() => {
+  const accentColor = useMemo<string>(() => {
     // Find the key in BASE_HUES that matches activeBaseHue
-    const hueEntry = Object.entries(BASE_HUES).find(([_, val]) => val === activeBaseHue);
-    const key = hueEntry ? hueEntry[0] : 'blue';
+    const hueEntry = (Object.entries(BASE_HUES) as Array<[BaseHueKey, number]>).find(([, val]) => val === activeBaseHue);
+    const key: BaseHueKey = hueEntry ? hueEntry[0] : 'blue';
 
     // Use the Bright variant for the UI accent to ensure visibility on dark backgrounds
     // Fallback to blue if something goes wrong
     return palette.bright[key]?.hex || palette.bright.blue.hex;
   }, [palette, activeBaseHue]);
 
-  const handleCopy = (text, key) => {
-    const textArea = document.createElement("textarea");
+  const handleCopy = (text: string, key: string) => {
+    const textArea = document.createElement('textarea');
     textArea.value = text;
-    textArea.style.position = "fixed";
-    textArea.style.left = "-9999px";
-    textArea.style.top = "0";
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '0';
     document.body.appendChild(textArea);
     textArea.focus();
     textArea.select();
@@ -388,24 +442,24 @@ white = "${palette.dim.white.hex}"`;
     });
 
     // Update active base hue so subsequent slider changes track correctly
-    setActiveBaseHue(closestBase);
-
     let newShift = h - closestBase;
     while (newShift > 180) newShift -= 360;
     while (newShift < -180) newShift += 360;
 
-    setConfig(prev => ({
+    updateConfig(prev => ({
       ...prev,
       hueShift: Math.round(newShift),
       lightnessScale: clamp(l, 0.3, 0.95),
       chromaScale: clamp(c, 0.01, 0.3),
-    }));
+    }), closestBase);
+
+    setActiveBaseHue(closestBase);
   };
 
   return (
     <div
       className="min-h-screen bg-neutral-950 text-neutral-200 font-sans selection:bg-neutral-700 p-4 md:p-8"
-      style={{ '--ui-accent': accentColor } as React.CSSProperties}
+      style={{ '--ui-accent': accentColor } as CSSProperties}
     >
       <header className="max-w-7xl mx-auto mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -419,7 +473,14 @@ white = "${palette.dim.white.hex}"`;
             OKLCH色空間を使用した知覚的に均一なターミナル配色の作成ツール
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
+          <button
+            onClick={copyAllJSON}
+            className="flex items-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-md transition-colors text-sm font-medium border border-neutral-700"
+          >
+            {copied === 'json' ? <Check size={16} className="text-green-400"/> : <Code size={16} />}
+            JSON
+          </button>
           <button
             onClick={copyAllGhostty}
             className="flex items-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-md transition-colors text-sm font-medium border border-neutral-700"
@@ -489,7 +550,7 @@ white = "${palette.dim.white.hex}"`;
                   {BRIGHT_STRATEGIES.map((strategy) => (
                     <button
                       key={strategy.id}
-                      onClick={() => setConfig({...config, brightStrategy: strategy.id})}
+                      onClick={() => updateConfig({...config, brightStrategy: strategy.id})}
                       className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all ${
                         config.brightStrategy === strategy.id
                           ? 'bg-[var(--ui-accent)] border-[var(--ui-accent)] text-white'
@@ -513,7 +574,7 @@ white = "${palette.dim.white.hex}"`;
                   {DIM_STRATEGIES.map((strategy) => (
                     <button
                       key={strategy.id}
-                      onClick={() => setConfig({...config, dimStrategy: strategy.id})}
+                      onClick={() => updateConfig({...config, dimStrategy: strategy.id})}
                       className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all ${
                         config.dimStrategy === strategy.id
                           ? 'bg-neutral-700 border-neutral-500 text-white'
@@ -539,7 +600,7 @@ white = "${palette.dim.white.hex}"`;
                 <input
                   type="range" min="0.01" max="0.3" step="0.005"
                   value={config.chromaScale}
-                  onChange={(e) => setConfig({...config, chromaScale: parseFloat(e.target.value)})}
+                  onChange={(e) => updateConfig({...config, chromaScale: parseFloat(e.target.value)})}
                   className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-[var(--ui-accent)]"
                 />
               </div>
@@ -553,7 +614,7 @@ white = "${palette.dim.white.hex}"`;
                 <input
                   type="range" min="0.3" max="0.9" step="0.01"
                   value={config.lightnessScale}
-                  onChange={(e) => setConfig({...config, lightnessScale: parseFloat(e.target.value)})}
+                  onChange={(e) => updateConfig({...config, lightnessScale: parseFloat(e.target.value)})}
                   className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-[var(--ui-accent)]"
                 />
               </div>
@@ -567,7 +628,7 @@ white = "${palette.dim.white.hex}"`;
                 <input
                   type="range" min="-180" max="180" step="5"
                   value={config.hueShift}
-                  onChange={(e) => setConfig({...config, hueShift: parseFloat(e.target.value)})}
+                  onChange={(e) => updateConfig({...config, hueShift: parseFloat(e.target.value)})}
                   className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-[var(--ui-accent)]"
                 />
               </div>
@@ -583,7 +644,7 @@ white = "${palette.dim.white.hex}"`;
                 <input
                   type="range" min="0.10" max="0.30" step="0.01"
                   value={config.bgLightness}
-                  onChange={(e) => setConfig({...config, bgLightness: parseFloat(e.target.value)})}
+                  onChange={(e) => updateConfig({...config, bgLightness: parseFloat(e.target.value)})}
                   className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-neutral-500"
                 />
               </div>
@@ -597,7 +658,7 @@ white = "${palette.dim.white.hex}"`;
                 <input
                   type="range" min="0.70" max="0.99" step="0.01"
                   value={config.fgLightness}
-                  onChange={(e) => setConfig({...config, fgLightness: parseFloat(e.target.value)})}
+                  onChange={(e) => updateConfig({...config, fgLightness: parseFloat(e.target.value)})}
                   className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-neutral-500"
                 />
               </div>
@@ -605,7 +666,10 @@ white = "${palette.dim.white.hex}"`;
             </div>
 
             <button
-              onClick={() => setConfig(DEFAULT_CONFIG)}
+              onClick={() => {
+                updateConfig(DEFAULT_CONFIG, BASE_HUES.blue);
+                setActiveBaseHue(BASE_HUES.blue);
+              }}
               className="mt-6 w-full flex items-center justify-center gap-2 py-2 text-xs font-medium text-neutral-500 hover:text-white hover:bg-neutral-800 rounded transition-colors"
             >
               <RefreshCw size={12} /> Reset to Default
@@ -831,7 +895,7 @@ white = "${palette.dim.white.hex}"`;
 }
 
 // Sub-component for individual color blocks
-function PaletteSwatch({ color, onCopy, copied }) {
+function PaletteSwatch({ color, onCopy, copied }: PaletteSwatchProps) {
   const isDark = color.l < 0.5;
   const isCopied = copied === color.name || copied === color.hex;
 
@@ -853,5 +917,15 @@ function PaletteSwatch({ color, onCopy, copied }) {
         <span className="text-[10px] text-neutral-500 font-medium truncate">{color.name}</span>
       </div>
     </div>
+  );
+}
+
+const root = document.getElementById('root');
+
+if (root) {
+  createRoot(root).render(
+    <StrictMode>
+      <TerminalPaletteGenerator />
+    </StrictMode>,
   );
 }
